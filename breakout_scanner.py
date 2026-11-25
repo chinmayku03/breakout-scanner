@@ -19,7 +19,7 @@ UPSTOX_TOKEN = os.environ["UPSTOX_ACCESS_TOKEN"]
 TG_BOT_TOKEN = os.environ["TG_BOT_TOKEN"]
 TG_CHAT_ID   = os.environ["TG_CHAT_ID"]
 
-ZONE_LEN, RANGE_PCT, NEAR_EMA_PCT, EMA_GAP_PCT, VOL_MULT = 25, 1.0, 0.5, 0.3, 2.0
+ZONE_LEN, RANGE_PCT, NEAR_EMA_PCT, EMA_GAP_PCT, VOL_MULT = 15, 1.0, 0.5, 0.3, 2.0
 alerted = set()
 HEADERS = {"Authorization": f"Bearer {UPSTOX_TOKEN}", "Accept": "application/json"}
 
