@@ -1,12 +1,11 @@
 import gzip, io, json, os, time, requests, pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-IST = ZoneInfo("Asia/Kolkata")   # GitHub ka server UTC time par chalta hai, isliye IST alag se
+IST = ZoneInfo("Asia/Kolkata")
 
 
 def load_env_file():
-    # PC par chalane ke liye: .env file se values utha lo (GitHub par Secrets se aati hain)
     if os.path.exists(".env"):
         for line in open(".env"):
             if "=" in line and not line.strip().startswith("#"):
@@ -19,9 +18,11 @@ UPSTOX_TOKEN = os.environ["UPSTOX_ACCESS_TOKEN"]
 TG_BOT_TOKEN = os.environ["TG_BOT_TOKEN"]
 TG_CHAT_ID   = os.environ["TG_CHAT_ID"]
 
-ZONE_LEN, RANGE_PCT, NEAR_EMA_PCT, EMA_GAP_PCT, VOL_MULT = 15, 1.0, 0.5, 0.3, 2.0
+ZONE_LEN, RANGE_PCT, NEAR_EMA_PCT, EMA_GAP_PCT, VOL_MULT = 22, 1.0, 0.5, 0.3, 2.0
 alerted = set()
+prev_day = {}   # har stock ki pichhle din ki candles (ek baar laate hain)
 HEADERS = {"Authorization": f"Bearer {UPSTOX_TOKEN}", "Accept": "application/json"}
+COLS = ["ts", "o", "h", "l", "c", "v", "oi"]
 
 
 def now_ist():
@@ -35,6 +36,23 @@ def get_cash_stocks():
             if d.get("segment") == "NSE_EQ" and d.get("instrument_type") == "EQ"]
 
 
+def get_prev_candles(key):
+    # Pichhle 7 din me se aakhri trading din ki 5-min candles
+    to_d = (now_ist().date() - timedelta(days=1)).isoformat()
+    from_d = (now_ist().date() - timedelta(days=7)).isoformat()
+    url = f"https://api.upstox.com/v3/historical-candle/{key}/minutes/5/{to_d}/{from_d}"
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=10)
+        c = r.json().get("data", {}).get("candles", []) if r.status_code == 200 else []
+    except Exception:
+        c = []
+    if not c:
+        return None
+    df = pd.DataFrame(c, columns=COLS).sort_values("ts")
+    last_day = df["ts"].str[:10].max()
+    return df[df["ts"].str[:10] == last_day]
+
+
 def get_candles(key):
     url = f"https://api.upstox.com/v3/historical-candle/intraday/{key}/minutes/5"
     r = requests.get(url, headers=HEADERS, timeout=10)
@@ -43,8 +61,10 @@ def get_candles(key):
     c = r.json().get("data", {}).get("candles", [])
     if not c:
         return None
-    df = pd.DataFrame(c, columns=["ts", "o", "h", "l", "c", "v", "oi"])
-    return df.iloc[::-1].reset_index(drop=True)
+    today = pd.DataFrame(c, columns=COLS)
+    prev = prev_day.get(key)
+    df = pd.concat([prev, today]) if prev is not None else today
+    return df.drop_duplicates("ts").sort_values("ts").reset_index(drop=True)
 
 
 def check_setup(df):
@@ -82,18 +102,20 @@ def scan(stocks):
 
 
 if __name__ == "__main__":
-    # GitHub ek job ko max 6 ghante chalne deta hai, isliye din 2 hisso me:
-    # Pehla run: subah se 12:45 tak.  Doosra run: 12:45 se 15:30 tak.
     start = now_ist()
     if (start.hour, start.minute) < (11, 0):
         stop_at = (12, 45)
     else:
         stop_at = (15, 31)
         while (now_ist().hour, now_ist().minute) < (12, 45):
-            time.sleep(30)          # pehla run khatam hone ka intezaar
+            time.sleep(30)
 
     stocks = get_cash_stocks()
     print("Stocks:", len(stocks))
+    for key, sym in stocks:
+        prev_day[key] = get_prev_candles(key)
+        time.sleep(0.05)
+    print("Pichhle din ki candles aa gayi:", sum(v is not None for v in prev_day.values()))
     send_telegram(f"Scanner chalu ho gaya ({now_ist():%H:%M} IST)")
 
     while True:
